@@ -20,8 +20,22 @@ from utils.dataset import Dataset
 
 def train(args, params):
     util.init_seeds()
-
-    model = nn.yolo_v11_x(args.num_cls)
+    
+    # Model
+    version = args.version
+    if version == 'n':
+        model = nn.yolo_v11_n(len(params['names']))
+    elif version == 's':
+        model = nn.yolo_v11_s(len(params['names']))
+    elif version == 'm':
+        model = nn.yolo_v11_m(len(params['names']))
+    elif version == 'l':
+        model = nn.yolo_v11_l(len(params['names']))
+    elif version == 'x':
+        model = nn.yolo_v11_x(len(params['names']))
+    else:
+        raise ValueError(f"Unsupported YOLOv11 variant: {version}. Choose from 'n', 's', 'm', 'l', 'x'.")
+    # model = nn.yolo_v11_x(args.num_cls)
     model.cuda()
 
     if args.distributed:
@@ -64,7 +78,7 @@ def train(args, params):
 
     best_map = 0.0
 
-    with open('weights/step.csv', 'w') as log:
+    with open(f'weights/step_{args.version}_{args.epochs}.csv', 'w') as log:
         if args.rank == 0:
             logger = csv.DictWriter(log, fieldnames=['epoch',
                                                      'box', 'cls', 'dfl',
@@ -103,6 +117,7 @@ def train(args, params):
                 images = batch["img"].cuda().float() / 255
                 with torch.amp.autocast("cuda"):
                     pred = model(images)
+                    print(pred)
                     loss, loss_items = criterion(pred, batch)
                     if args.distributed:
                         loss *= args.world_size
@@ -141,11 +156,11 @@ def train(args, params):
                 log.flush()
 
                 ckpt = {'epoch': epoch+1, 'model': copy.deepcopy(ema.ema)}
-                torch.save(ckpt, 'weights/last.pt')
+                torch.save(ckpt, f'weights/last_{args.version}_{args.epochs}.pt')
 
                 if mean_map > best_map:
                     best_map = mean_map
-                    torch.save(ckpt, 'weights/best.pt')
+                    torch.save(ckpt, f'weights/best_{args.version}_{args.epochs}.pt')
 
                 del ckpt
 
@@ -166,7 +181,10 @@ def validate(args, params, model=None):
 
     if not model:
         args.plot = True
-        model = torch.load(f='weights/best.pt', map_location='cuda')
+        # pretrained model
+        # model = torch.load(f'./weights/v11_{args.version}.pt', 'cuda')
+        # custom model
+        model = torch.load(f=f'weights/best_{args.version}_{args.epochs}.pt', map_location='cuda')
         model = model['model'].float().fuse()
 
     # model.half()
@@ -181,6 +199,9 @@ def validate(args, params, model=None):
         image = (batch["img"].cuda().float()) / 255
         for k in ["idx", "cls", "box"]:
             batch[k] = batch[k].cuda()
+        # print("idx:", batch["idx"])
+        # print("cls:",batch["cls"])
+        # print("box:",batch["box"])
 
         outputs = util.non_max_suppression(model(image))
 
@@ -195,7 +216,9 @@ def validate(args, params, model=None):
                                  target=stats['target_cls'],
                                  plot=args.plot,
                                  save_dir='weights/',
-                                 names=params['names'])
+                                 names=params['names'],
+                                 args=args
+                                 )
 
         m_pre = result['precision']
         m_rec = result['recall']
@@ -211,11 +234,15 @@ def validate(args, params, model=None):
 
 @torch.no_grad()
 def inference(args, params):
-    model = torch.load('./weights/v11_m.pt', 'cuda')['model'].float()
+    # pretrained model
+    # model = torch.load(f'./weights/v11_{args.version}.pt', 'cuda')["model"].float()
+    # custom model
+    model = torch.load(f'./weights/best_{args.version}_{args.epochs}.pt', 'cuda')['model'].float()
     model.half()
     model.eval()
 
-    camera = cv2.VideoCapture('2.mp4')
+    # camera = cv2.VideoCapture('2.mp4')
+    camera = cv2.VideoCapture(0)
 
     # Get video properties
     width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -293,15 +320,45 @@ def inference(args, params):
     out.release()
     cv2.destroyAllWindows()
 
+def profile(args, params):
+    import thop
+    shape = (1, 3, args.inp_size, args.inp_size)
+    print(f"params amount: {len(params['names'])}")
+    version = args.version
+    if version == 'n':
+        model = nn.yolo_v11_n(len(params['names'])).fuse()
+    elif version == 's':
+        model = nn.yolo_v11_s(len(params['names'])).fuse()
+    elif version == 'm':
+        model = nn.yolo_v11_m(len(params['names'])).fuse()
+    elif version == 'l':
+        model = nn.yolo_v11_l(len(params['names'])).fuse()
+    elif version == 'x':
+        model = nn.yolo_v11_x(len(params['names'])).fuse()
+    else:
+        raise ValueError(f"Unsupported YOLOv11 variant: {version}. Choose from 'n', 's', 'm', 'l', 'x'.")
+    # model = nn.yolo_v11_n(len(params['names'])).fuse()
+
+    model.eval()
+    model(torch.zeros(shape))
+
+    x = torch.empty(shape)
+    flops, num_params = thop.profile(model, inputs=[x], verbose=False)
+    flops, num_params = thop.clever_format(nums=[2 * flops, num_params], format="%.3f")
+
+    if args.rank == 0:
+        print(f'Number of parameters: {num_params}')
+        print(f'Number of FLOPs: {flops}')
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--version', type=str)
     parser.add_argument('--rank', default=0, type=int)
     parser.add_argument('--epochs', default=2, type=int)
     parser.add_argument('--num-cls', type=int, default=80)
     parser.add_argument('--inp-size', type=int, default=640)
-    parser.add_argument('--batch-size', type=int, default=64)
-    parser.add_argument('--data-dir', type=str, default='COCO')
+    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--data-dir', type=str, default='D:/dataset_d/mscoco_yolo')
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--validate', action='store_true')
@@ -316,12 +373,19 @@ def main():
     with open('utils/args.yaml', errors='ignore') as f:
         params = yaml.safe_load(f)
 
+    profile(args, params)
+
     if args.train:
         train(args, params)
     if args.validate:
         validate(args, params)
     if args.inference:
         inference(args, params)
+
+    # Clean
+    if args.distributed:
+        torch.distributed.destroy_process_group()
+    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     main()

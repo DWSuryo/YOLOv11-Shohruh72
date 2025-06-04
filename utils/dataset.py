@@ -9,6 +9,8 @@ from utils import augment
 from copy import deepcopy
 from torch.utils import data
 
+from tqdm import tqdm
+
 from ultralytics.utils.instance import Instances
 
 img_ext = {"bmp", "jpeg", "jpg", "png", "tif", "tiff"}
@@ -63,6 +65,7 @@ class Dataset(data.Dataset):
 
     @staticmethod
     def load_image(path):
+        # print(path)
         samples = []
         for p in [path]:
             p = Path(p)
@@ -70,6 +73,7 @@ class Dataset(data.Dataset):
                 samples += [x.replace("./", str(p.parent) + os.sep)
                             if x.startswith("./") else x for x in
                             f.read().strip().splitlines()]
+        # print(samples[0], os.path.isfile(samples[0]))
 
         return sorted(x.replace("/", os.sep) for x in samples if
                       x.split(".")[-1].lower() in img_ext)
@@ -94,9 +98,14 @@ class Dataset(data.Dataset):
 
         path = Path(labels[0]).parent.with_suffix(".cache")
         if os.path.exists(path):
+            print("cache loaded")
             return torch.load(path)
+        else:
+            print("cache not loaded")
 
-        for img, label in zip(images, labels):
+        nothing = 0
+        for img, label in tqdm(zip(images, labels), total=len([q for q in zip(images,labels)])):
+            # print(img, os.path.isfile(img) , end='\n')
             try:
                 image = Image.open(img)
                 image.verify()
@@ -106,12 +115,14 @@ class Dataset(data.Dataset):
                         shape[1] > 9), f"image size {shape} <10 pixels"
                 assert image.format.lower() in img_ext, f"invalid image format"
 
+                # print(os.path.isfile(label))
                 if os.path.isfile(label):
                     with open(label) as f:
                         lines = f.read().strip().splitlines()
                         lb = [x.split() for x in lines if len(x)]
                         lb = np.array(lb, dtype=np.float32)
                     nl = len(lb)
+                    # print(img, len(nl))
                     if nl:
                         assert lb.min() >= 0, f"negative label values {lb[lb < 0]}"
                         assert lb.shape[
@@ -125,24 +136,32 @@ class Dataset(data.Dataset):
                         if len(i) < nl:  # duplicate row check
                             lb = lb[i]  # remove duplicates
                     else:
+                        nothing += 1
+                        print(f"No labels at {label}\tcount: {nothing}")
                         lb = np.zeros((0, 5), dtype=np.float32)
                 else:
+                    nothing += 1
+                    print(f"No file {label}\tcount: {nothing}")
                     lb = np.zeros((0, 5), dtype=np.float32)
                 lb = lb[:, :5]
                 if img:
                     cache["labels"].append({'image': img,
                                             "shape": shape,
-                                            'cls': lb[:, 0:1],
-                                            'box': lb[:, 1:],
+                                            # 'cls': lb[:, 0:1],
+                                            'cls': lb[:, 0:1] if nl > 0 and lb.ndim > 1 else np.empty((0, 1), dtype=np.float32),
+                                            # 'box': lb[:, 1:],
+                                            'box': lb[:, 1:5] if nl > 0 and lb.ndim > 1 else np.empty((0, 4), dtype=np.float32),
                                             "norm": True,
                                             "format": "xywh"})
             except Exception as e:
                 print(f"Skipping file {img} due to error: {e}")
+        print(f"Count no files or labels: {nothing}")
         torch.save(cache, path)
         return cache
 
     def get_image_and_label(self, index):
         label = deepcopy(self.labels[index])
+        # print(label.keys())
         label["img"], label["shape"], label["new_shape"] = self.read_image(index)
         label["pad"] = (label["new_shape"][0] / label["shape"][0],
                         label["new_shape"][1] / label["shape"][1])

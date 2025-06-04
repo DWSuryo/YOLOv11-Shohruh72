@@ -297,7 +297,9 @@ class Albumentations:
                      album.CLAHE(p=0.01),
                      album.RandomBrightnessContrast(p=0.0),
                      album.RandomGamma(p=0.0),
-                     album.ImageCompression(quality_lower=75, p=0.0), ]
+                    #  album.ImageCompression(quality_lower=75, p=0.0),
+                     album.ImageCompression(quality_range=(75,100), p=0.0), 
+                     ]
 
         self.transform = album.Compose(transform)
 

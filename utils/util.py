@@ -411,12 +411,15 @@ def non_max_suppression(pred, conf_th=0.001, iou_th=0.7):
     bs = pred.shape[0]  # batch size
     nc = pred.shape[1] - 4  # number of classes
     xc = pred[:, 4:(4 + nc)].amax(1) > conf_th
+    # print(xc)
 
     start_time = time.time()
     time_limit = 2.0 + 0.05 * bs
 
     pred = pred.transpose(-1, -2)
+    # print("shape:",pred.shape)
     pred[..., :4] = wh2xy(pred[..., :4])
+    # print("wh2xy:", pred[..., :4])
 
     output = [torch.zeros((0, 6), device=pred.device)] * bs
     for xi, x in enumerate(pred):
@@ -462,7 +465,7 @@ def smooth(y, f=0.05):
 
 
 def compute_ap(tp, conf, pred, target, plot=False, on_plot=None,
-               save_dir=Path(), names={}):
+               save_dir=Path(), names={}, args=None):
     save_dir = Path(save_dir)
     pr_val = []
     i = np.argsort(-conf)
@@ -506,13 +509,13 @@ def compute_ap(tp, conf, pred, target, plot=False, on_plot=None,
     f1 = 2 * p * r / (p + r + 1e-16)
     names = dict(enumerate([v for k, v in names.items() if k in unique_cls]))
     if plot:
-        plot_pr_curve(x, pr_val, ap, save_dir / f"PR_curve.png", names,
+        plot_pr_curve(x, pr_val, ap, save_dir / f"PR_curve_{args.version}_{args.epochs}.png", names,
                       plot=on_plot)
-        plot_mc_curve(x, f1, save_dir / f"F1_curve.png", names, y="F1",
+        plot_mc_curve(x, f1, save_dir / f"F1_curve_{args.version}_{args.epochs}.png", names, y="F1",
                       plot=on_plot)
-        plot_mc_curve(x, p, save_dir / f"P_curve.png", names, y="Precision",
+        plot_mc_curve(x, p, save_dir / f"P_curve_{args.version}_{args.epochs}.png", names, y="Precision",
                       plot=on_plot)
-        plot_mc_curve(x, r, save_dir / f"R_curve.png", names, y="Recall",
+        plot_mc_curve(x, r, save_dir / f"R_curve_{args.version}_{args.epochs}.png", names, y="Recall",
                       plot=on_plot)
 
     i = smooth(f1.mean(0), 0.1).argmax()
