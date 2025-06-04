@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import csv
 import cv2
@@ -117,7 +118,7 @@ def train(args, params):
                 images = batch["img"].cuda().float() / 255
                 with torch.amp.autocast("cuda"):
                     pred = model(images)
-                    print(pred)
+                    # print(pred)
                     loss, loss_items = criterion(pred, batch)
                     if args.distributed:
                         loss *= args.world_size
@@ -351,6 +352,10 @@ def profile(args, params):
         print(f'Number of FLOPs: {flops}')
 
 def main():
+    # time start
+    time_start = datetime.now()
+    print("Started at Date and Time:", time_start.strftime("%Y-%m-%d %H:%M:%S"))
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', type=str)
     parser.add_argument('--rank', default=0, type=int)
@@ -386,6 +391,19 @@ def main():
     if args.distributed:
         torch.distributed.destroy_process_group()
     torch.cuda.empty_cache()
+
+    # time end
+    time_end = datetime.now()
+    print("Finished at Date and Time:", time_end.strftime("%Y-%m-%d %H:%M:%S"))
+    time_duration = time_end - time_start
+    # Format the duration as Days HH:MM:SS
+    days = time_duration.days
+    seconds = time_duration.seconds
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    formatted_duration = f"{days} Days {hours:02}:{minutes:02}:{seconds:02}"
+    print(f"Code execution time: {formatted_duration}")
 
 if __name__ == "__main__":
     main()
