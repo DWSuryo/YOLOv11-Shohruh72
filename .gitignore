@@ -200,3 +200,4 @@ weights/*.png
 
 # media files
 *.mp4
+!videos/*.mp4

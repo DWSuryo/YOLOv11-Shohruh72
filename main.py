@@ -79,7 +79,7 @@ def train(args, params):
 
     best_map = 0.0
 
-    with open(f'weights/step_{args.version}_{args.epochs}.csv', 'w') as log:
+    with open(f'weights/step_{args.version}_{args.epochs}.csv', 'w', newline='') as log:
         if args.rank == 0:
             logger = csv.DictWriter(log, fieldnames=['epoch',
                                                      'box', 'cls', 'dfl',
