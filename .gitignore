@@ -200,4 +200,7 @@ weights/*.png
 
 # media files
 *.mp4
+!src/*.mp4
 !videos/*.mp4
+*.csv
+!weights/step.csv

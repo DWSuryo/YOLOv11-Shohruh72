@@ -115,6 +115,7 @@ class Dataset(data.Dataset):
                         shape[1] > 9), f"image size {shape} <10 pixels"
                 assert image.format.lower() in img_ext, f"invalid image format"
 
+                # print(label)
                 # print(os.path.isfile(label))
                 if os.path.isfile(label):
                     with open(label) as f:
@@ -144,13 +145,14 @@ class Dataset(data.Dataset):
                     print(f"No file {label}\tcount: {nothing}")
                     lb = np.zeros((0, 5), dtype=np.float32)
                 lb = lb[:, :5]
+                # print(lb)
                 if img:
                     cache["labels"].append({'image': img,
                                             "shape": shape,
-                                            # 'cls': lb[:, 0:1],
-                                            'cls': lb[:, 0:1] if nl > 0 and lb.ndim > 1 else np.empty((0, 1), dtype=np.float32),
-                                            # 'box': lb[:, 1:],
-                                            'box': lb[:, 1:5] if nl > 0 and lb.ndim > 1 else np.empty((0, 4), dtype=np.float32),
+                                            'cls': lb[:, 0:1],
+                                            # 'cls': lb[:, 0:1] if nl > 0 and lb.ndim > 1 else np.empty((0, 1), dtype=np.float32),
+                                            'box': lb[:, 1:],
+                                            # 'box': lb[:, 1:5] if nl > 0 and lb.ndim > 1 else np.empty((0, 4), dtype=np.float32),
                                             "norm": True,
                                             "format": "xywh"})
             except Exception as e:

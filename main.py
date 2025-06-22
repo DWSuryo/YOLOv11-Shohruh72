@@ -13,11 +13,14 @@ from torch.utils import data
 from torch import distributed as dist
 from torch.nn.utils import clip_grad_norm_ as clip
 from torch.nn.parallel import DistributedDataParallel
+import zipfile
 
 from nets import nn
 from utils import util
 from utils.dataset import Dataset
 
+# dataset_dir = "D:\\dataset_d\\mscoco_yolo"
+dataset_dir = "D:\\dataset_d\\coco-2017-download"
 
 def train(args, params):
     util.init_seeds()
@@ -150,8 +153,8 @@ def train(args, params):
                                  'box': str(f'{box:.3f}'),
                                  'cls': str(f'{cls:.3f}'),
                                  'dfl': str(f'{dfl:.3f}'),
-                                 'mAP': str(f'{mean_map:.3f}'),
-                                 'mAP@50': str(f'{map50:.3f}'),
+                                 'mAP': str(f'{mean_map:.6f}'),
+                                 'mAP@50': str(f'{map50:.6f}'),
                                  'Recall': str(f'{m_rec:.3f}'),
                                  'Precision': str(f'{m_pre:.3f}')})
                 log.flush()
@@ -242,8 +245,10 @@ def inference(args, params):
     model.half()
     model.eval()
 
-    # camera = cv2.VideoCapture('2.mp4')
-    camera = cv2.VideoCapture(0)
+    if args.source == 'video':
+        camera = cv2.VideoCapture('src/crowd1.mp4')
+    elif args.source == 'camera':
+        camera = cv2.VideoCapture(0)
 
     # Get video properties
     width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -351,6 +356,75 @@ def profile(args, params):
         print(f'Number of parameters: {num_params}')
         print(f'Number of FLOPs: {flops}')
 
+def zip_weights_directory(args):
+    weights_dir = "./weights/"
+    files_to_zip = []
+
+    # Ensure weights directory exists
+    if not os.path.exists(weights_dir):
+        print("Error: ./weights/ directory does not exist.")
+        return
+
+    # Collect matching files
+    for filename in os.listdir(weights_dir):
+        if f"_{args.version}_{args.epochs}." in filename or f"_{args.version}_{args.epochs}_state_dict." in filename:  # Match file_n_x.suffix format
+            files_to_zip.append(os.path.join(weights_dir, filename))
+    print(files_to_zip)
+
+    if not files_to_zip:
+        print("No matching files found to zip.")
+        return
+
+    # Create ZIP file
+    output_zip = f"result_{args.version}_{args.epochs}.zip"
+    with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for file in files_to_zip:
+            zipf.write(file, os.path.basename(file))
+
+    print(f"Successfully created {output_zip} containing {len(files_to_zip)} files.")
+
+# CSV read and plot mAP function
+def plot_mAP(args):
+    mAP_list = []
+    epoch_list = []
+    with open(f"./weights/step_{args.version}_{args.epochs}.csv", "r") as file:
+        reader = csv.DictReader(file)  # Reads as a dictionary
+        for row in reader:
+            # print(row)
+            epoch_list.append(int(row["epoch"]))  # Convert epoch to integer
+            mAP_list.append(float(row["mAP"]))    # Convert mAP to float
+
+    # Find the best mAP and corresponding epoch
+    best_mAP = max(mAP_list)
+    best_epoch = epoch_list[mAP_list.index(best_mAP)]
+    last_mAP = mAP_list[-1]
+    last_epoch = epoch_list[-1]
+    # Plot mAP vs. epochs using Matplotlib
+    import matplotlib.pyplot as plt
+
+    # Create subplots
+    fig, ax = plt.subplots(1, 1, layout='constrained')
+    # Plot mAP vs. epochs
+    ax.plot(epoch_list, mAP_list, label=f'mAP (last: {last_mAP:.6f}, best: {best_mAP:.6f})')
+    # Highlight best mAP epoch
+    ax.scatter(best_epoch, best_mAP, color='red', label=f'Best mAP at epoch {best_epoch}', zorder=3)
+    # Set axis limits
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("mAP")
+    ax.set_ylim(0, 1)  # Set y-axis scale from 0 to 1
+    ax.grid(True)
+    # Set title and subtitle
+    # version = "YOLOv11 version n"  # Change this dynamically based on actual version
+    # epochs = last_epoch  # Total epochs
+    fig.suptitle("mAP vs. Epochs")
+    ax.set_title(f"YOLOv11 version {args.version} at {args.epochs} epochs")
+    # Position legend above the graph
+    # ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.15), ncol=2, frameon=False)
+    fig.legend(loc="outside lower center")
+
+    plt.savefig(f"./weights/mAP_vs_epochs_{args.version}_{args.epochs}.png")
+    plt.close()
+
 def main():
     # time start
     time_start = datetime.now()
@@ -363,17 +437,21 @@ def main():
     parser.add_argument('--num-cls', type=int, default=80)
     parser.add_argument('--inp-size', type=int, default=640)
     parser.add_argument('--batch-size', type=int, default=32)
-    parser.add_argument('--data-dir', type=str, default='D:/dataset_d/mscoco_yolo')
+    parser.add_argument('--data-dir', type=str, default=dataset_dir)
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--validate', action='store_true')
     parser.add_argument('--inference', action='store_true')
+    parser.add_argument('--source', choices=['video','camera'], default='video', type=str)
+    parser.add_argument('--zip', action='store_true')
 
     args = parser.parse_args()
 
     args.rank = int(os.environ.get("RANK", 0))
     args.world_size = int(os.getenv('WORLD_SIZE', 1))
     args.distributed = int(os.getenv('WORLD_SIZE', 1)) > 1
+
+    print(args)
 
     with open('utils/args.yaml', errors='ignore') as f:
         params = yaml.safe_load(f)
@@ -391,6 +469,13 @@ def main():
     if args.distributed:
         torch.distributed.destroy_process_group()
     torch.cuda.empty_cache()
+
+    if args.plot == True:
+        plot_mAP(args)
+
+    # zip files
+    if args.zip:
+        zip_weights_directory(args)
 
     # time end
     time_end = datetime.now()
